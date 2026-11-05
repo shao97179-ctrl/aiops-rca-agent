@@ -1,4 +1,5 @@
-from typing import TypedDict
+from operator import add
+from typing import Annotated, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
@@ -8,15 +9,15 @@ from ops_agent_runtime.tools import query_logs
 class AgentState(TypedDict):
     """一次故障调查在主循环中的最小状态。"""
 
-    user_question: str
-    messages: list[dict]
-    current_action: dict | None
-    investigation_count: int
-    called_signatures: list[str]
-    evidence: list[dict]
-    traces: list[dict]
-    investigation_status: str
-    final_conclusion: dict | None
+    user_question: str                               #用户问题
+    messages: Annotated[list[dict], add]             #消息列表
+    current_action: dict | None                      #当前操作
+    investigation_count: int                         #调查次数
+    called_signatures: Annotated[list[str], add]     #已用工具签名列表
+    evidence: Annotated[list[dict], add]             #证据列表
+    traces: Annotated[list[dict], add]               #追踪记录
+    investigation_status: str                        #调查状态
+    final_conclusion: dict | None                    #最终结论
 
 
 def build_agent_graph(model):
@@ -25,20 +26,17 @@ def build_agent_graph(model):
     def agent_node(state: AgentState):
         action = model(state)
 
-        trace = [
-            *state["traces"],
-            {
-                "event": "model_decision",
-                "action": action.get("action"),
-                "tool": action.get("tool"),
-                "arguments": action.get("arguments"),
-                "reason": action.get("reason"),
-            },
-        ]
-
         return {
             "current_action": action,
-            "traces": trace,
+            "traces": [
+                {
+                    "event": "model_decision",
+                    "action": action.get("action"),
+                    "tool": action.get("tool"),
+                    "arguments": action.get("arguments"),
+                    "reason": action.get("reason"),
+                }
+            ],
         }
 
     def route_after_agent(state: AgentState):
@@ -75,18 +73,7 @@ def build_agent_graph(model):
             "result": result,
         }
 
-        trace = [
-            *state["traces"],
-            {
-                "event": "tool_result",
-                "tool": tool_name,
-                "arguments": arguments,
-                "result": result,
-            },
-        ]
-
         evidence = [
-            *state["evidence"],
             *(
                 {"type": "log", "id": log["id"]}
                 for log in result.get("logs", [])
@@ -94,11 +81,18 @@ def build_agent_graph(model):
         ]
 
         return {
-            "messages": [*state["messages"], message],
+            "messages": [message],
             "current_action": None,
             "investigation_count": state["investigation_count"] + 1,
             "evidence": evidence,
-            "traces": trace,
+            "traces": [
+                {
+                    "event": "tool_result",
+                    "tool": tool_name,
+                    "arguments": arguments,
+                    "result": result,
+                }
+            ],
         }
 
     def finalize_node(state: AgentState):
@@ -111,19 +105,16 @@ def build_agent_graph(model):
             "unknowns": action.get("unknowns", []),
         }
 
-        trace = [
-            *state["traces"],
-            {
-                "event": "final_conclusion",
-                "conclusion": findings,
-            },
-        ]
-
         return {
             "current_action": None,
             "investigation_status": "completed",
             "final_conclusion": findings,
-            "traces": trace,
+            "traces": [
+                {
+                    "event": "final_conclusion",
+                    "conclusion": findings,
+                }
+            ],
         }
 
     graph = StateGraph(AgentState)
