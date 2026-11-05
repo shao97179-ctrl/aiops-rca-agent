@@ -1,9 +1,91 @@
 from operator import add
-from typing import Annotated, TypedDict
+from typing import Annotated, Literal, TypedDict
 
 from langgraph.graph import END, START, StateGraph
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 
 from ops_agent_runtime.tools import query_logs
+
+
+class QueryLogsArguments(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    service: str | None = None
+    level: Literal["INFO", "WARN", "ERROR"] | None = None
+    start: str | None = None
+    end: str | None = None
+
+
+class CallToolAction(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    action: Literal["call_tool"]
+    tool: Literal["query_logs"]
+    arguments: QueryLogsArguments
+    reason: str = Field(min_length=1)
+
+
+class LogEvidence(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["log"]
+    id: str = Field(min_length=1)
+
+
+class DeployEvidence(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["deploy"]
+    id: str = Field(min_length=1)
+
+
+class MetricEvidence(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["metric"]
+    metric: str = Field(min_length=1)
+    scope: str = Field(min_length=1)
+    time: str = Field(min_length=1)
+
+
+EvidenceReference = Annotated[
+    LogEvidence | DeployEvidence | MetricEvidence,
+    Field(discriminator="type"),
+]
+
+
+class SubmitConclusionAction(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    action: Literal["submit_conclusion"]
+    root_cause: str = Field(min_length=1)
+    evidence: list[EvidenceReference]
+    confidence: Literal["high", "medium", "low"]
+    unknowns: list[str]
+
+
+ModelDecision = Annotated[
+    CallToolAction | SubmitConclusionAction,
+    Field(discriminator="action"),
+]
+MODEL_DECISION_ADAPTER = TypeAdapter(ModelDecision)
+
+
+def _parse_model_action(raw_action):
+    """解析模型原始输出；失败时返回可回灌的错误，而不是抛异常。"""
+    if not isinstance(raw_action, dict):
+        return None, (
+            "invalid model output: expected an object, "
+            f"received {type(raw_action).__name__}"
+        )
+
+    action_name = raw_action.get("action")
+    try:
+        return MODEL_DECISION_ADAPTER.validate_python(raw_action), None
+    except ValidationError as exc:
+        if action_name not in {"call_tool", "submit_conclusion"}:
+            return None, f"unsupported action: {action_name!r}"
+        return None, f"invalid model output for action {action_name!r}: {exc}"
 
 
 class AgentState(TypedDict):
@@ -24,8 +106,17 @@ def build_agent_graph(model):
     """构建“模型决策 -> 工具执行 -> 模型决策”的最小 LangGraph。"""
 
     def agent_node(state: AgentState):
-        action = model(state)
+        parsed_action, error = _parse_model_action(model(state))
 
+        if error:
+            return {
+                "current_action": None,
+                "messages": [{"role": "validation_error", "error": error}],
+                "investigation_count": state["investigation_count"] + 1,
+                "traces": [{"event": "validation_error", "error": error}],
+            }
+
+        action = parsed_action.model_dump()
         return {
             "current_action": action,
             "traces": [
@@ -41,6 +132,9 @@ def build_agent_graph(model):
 
     def route_after_agent(state: AgentState):
         action = state["current_action"]
+
+        if action is None:
+            return "retry"
 
         if action and action.get("action") == "call_tool":
             return "call_tool"
@@ -131,6 +225,7 @@ def build_agent_graph(model):
         {
             "call_tool": "tools",
             "submit_conclusion": "finalize",
+            "retry": "agent",
         },
     )
 
