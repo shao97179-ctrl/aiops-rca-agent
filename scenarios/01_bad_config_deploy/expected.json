@@ -1,0 +1,16 @@
+{
+  "scenario_id": "01_bad_config_deploy",
+  "task": "rca",
+  "root_cause": "2026-11-01T12:00 发布 dep_d1003 将 payment 的依赖配置 dependency.cart.port 由 8080 误改为 8081（cart 实际监听 8080），配置热更新于 12:01 生效后，payment 无法连接 cart，下单持续失败，全局错误率自 12:05 起升至约 40%。",
+  "key_evidence": ["dep_d1003", "log_0009", "log_0011", "log_0019", "metrics:error_rate@12:05"],
+  "mitigation": "将 payment 配置中 dependency.cart.port 改回 8080 并重新发布，确认下单恢复、错误率回落。",
+  "grading": {
+    "root_cause_must_mention": ["配置", "端口", "8081", "dep_d1003 或 12:00 的发布"],
+    "evidence_must_exist": true,
+    "evidence_check": "agent 引用的每条证据（日志 id、发布 id、指标点）必须能在场景数据中找到，否则判为编造"
+  },
+  "distractors": [
+    "log_0002 磁盘 75% 告警：与故障无关，不应作为根因",
+    "dep_d1001 / dep_d1002：11:20、11:35 的发布，时间上与 12:05 故障起点不符"
+  ]
+}

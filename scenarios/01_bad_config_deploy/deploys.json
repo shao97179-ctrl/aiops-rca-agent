@@ -1,0 +1,34 @@
+{
+  "deploys": [
+    {
+      "id": "dep_d1001",
+      "time": "2026-11-01T11:20:00",
+      "service": "frontend",
+      "operator": "operator_li",
+      "change": "更新前端镜像 v2.4.0 -> v2.4.1",
+      "note": "发布后无异常"
+    },
+    {
+      "id": "dep_d1002",
+      "time": "2026-11-01T11:35:00",
+      "service": "cart",
+      "operator": "operator_zhang",
+      "change": "调整 JVM 堆参数 -Xmx2g -> -Xmx3g",
+      "note": "发布后无异常"
+    },
+    {
+      "id": "dep_d1003",
+      "time": "2026-11-01T12:00:00",
+      "service": "payment",
+      "operator": "operator_wang",
+      "change": "更新支付依赖配置",
+      "detail": {
+        "file": "payment/config.yaml",
+        "modified_key": "dependency.cart.port",
+        "old_value": "8080",
+        "new_value": "8081"
+      },
+      "note": "配置中心热更新，发布后未做下单验证"
+    }
+  ]
+}

@@ -1,0 +1,25 @@
+{"ts": "2026-11-01T11:38:22", "level": "INFO", "service": "frontend", "msg": "GET /health 200", "id": "log_0001"}
+{"ts": "2026-11-01T11:40:15", "level": "WARN", "service": "frontend", "msg": "disk usage 75% on node node-2", "id": "log_0002"}
+{"ts": "2026-11-01T11:45:03", "level": "INFO", "service": "user", "msg": "login ok user=u1024", "id": "log_0003"}
+{"ts": "2026-11-01T11:50:11", "level": "INFO", "service": "frontend", "msg": "POST /checkout 200 latency=142ms", "id": "log_0004"}
+{"ts": "2026-11-01T11:52:41", "level": "INFO", "service": "payment", "msg": "order ord_8841 charged, called cart:8080 ok", "id": "log_0005"}
+{"ts": "2026-11-01T11:55:02", "level": "INFO", "service": "cart", "msg": "GET /items latency=18ms", "id": "log_0006"}
+{"ts": "2026-11-01T11:58:30", "level": "INFO", "service": "payment", "msg": "healthcheck ok", "id": "log_0007"}
+{"ts": "2026-11-01T12:00:41", "level": "INFO", "service": "frontend", "msg": "GET /health 200", "id": "log_0008"}
+{"ts": "2026-11-01T12:01:10", "level": "INFO", "service": "payment", "msg": "config reloaded (source=dep_d1003)", "id": "log_0009"}
+{"ts": "2026-11-01T12:03:33", "level": "INFO", "service": "cart", "msg": "GET /items latency=21ms", "id": "log_0010"}
+{"ts": "2026-11-01T12:05:01", "level": "ERROR", "service": "payment", "msg": "connect cart:8081: connection refused (retry 1/3)", "id": "log_0011"}
+{"ts": "2026-11-01T12:05:02", "level": "ERROR", "service": "payment", "msg": "connect cart:8081: connection refused (retry 2/3)", "id": "log_0012"}
+{"ts": "2026-11-01T12:05:04", "level": "ERROR", "service": "payment", "msg": "order ord_8842 failed: cart unavailable", "id": "log_0013"}
+{"ts": "2026-11-01T12:05:09", "level": "WARN", "service": "frontend", "msg": "POST /checkout 502 upstream=payment", "id": "log_0014"}
+{"ts": "2026-11-01T12:05:15", "level": "ERROR", "service": "payment", "msg": "connect cart:8081: connection refused", "id": "log_0015"}
+{"ts": "2026-11-01T12:06:20", "level": "ERROR", "service": "payment", "msg": "circuit breaker OPEN for cart", "id": "log_0016"}
+{"ts": "2026-11-01T12:07:44", "level": "WARN", "service": "frontend", "msg": "POST /checkout 502 upstream=payment", "id": "log_0017"}
+{"ts": "2026-11-01T12:09:02", "level": "ERROR", "service": "payment", "msg": "order ord_8843 failed: cart unavailable", "id": "log_0018"}
+{"ts": "2026-11-01T12:12:10", "level": "INFO", "service": "cart", "msg": "GET /items latency=19ms", "id": "log_0019"}
+{"ts": "2026-11-01T12:13:55", "level": "ERROR", "service": "payment", "msg": "connect cart:8081: connection refused", "id": "log_0020"}
+{"ts": "2026-11-01T12:15:30", "level": "INFO", "service": "user", "msg": "login ok user=u2048", "id": "log_0021"}
+{"ts": "2026-11-01T12:18:41", "level": "ERROR", "service": "payment", "msg": "order ord_8844 failed: cart unavailable", "id": "log_0022"}
+{"ts": "2026-11-01T12:20:05", "level": "WARN", "service": "frontend", "msg": "POST /checkout 502 upstream=payment", "id": "log_0023"}
+{"ts": "2026-11-01T12:24:18", "level": "ERROR", "service": "payment", "msg": "connect cart:8081: connection refused", "id": "log_0024"}
+{"ts": "2026-11-01T12:29:52", "level": "ERROR", "service": "payment", "msg": "order ord_8845 failed: cart unavailable", "id": "log_0025"}
