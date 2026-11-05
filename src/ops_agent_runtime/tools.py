@@ -5,6 +5,7 @@ from pathlib import Path
 SCENARIO_DIR = Path(__file__).resolve().parents[2] / "scenarios" / "01_bad_config_deploy"
 METRICS_FILE = SCENARIO_DIR / "metrics.json"
 LOGS_FILE = SCENARIO_DIR / "logs.jsonl"
+DEPLOYS_FILE = SCENARIO_DIR / "deploys.json"
 
 
 def _normalize_time(value, name):
@@ -17,6 +18,21 @@ def _normalize_time(value, name):
         return None, {
             "error": f"invalid {name}: {value!r}, expected format YYYY-MM-DDTHH:MM"
         }
+
+
+def _normalize_range(start, end):
+    """校验查询时间范围，返回 (start_ts, end_ts, error)。"""
+    start_ts, error = _normalize_time(start, "start")
+    if error:
+        return None, None, error
+    end_ts, error = _normalize_time(end, "end")
+    if error:
+        return None, None, error
+    if start_ts and end_ts and start_ts > end_ts:
+        return None, None, {
+            "error": f"start ({start_ts}) is after end ({end_ts})"
+        }
+    return start_ts, end_ts, None
 
 
 def query_metrics(metric, scope, start=None, end=None):
@@ -44,14 +60,9 @@ def query_metrics(metric, scope, start=None, end=None):
             "available_scopes": available_scopes,
         }
 
-    start_ts, error = _normalize_time(start, "start")
+    start_ts, end_ts, error = _normalize_range(start, end)
     if error:
         return error
-    end_ts, error = _normalize_time(end, "end")
-    if error:
-        return error
-    if start_ts and end_ts and start_ts > end_ts:
-        return {"error": f"start ({start_ts}) is after end ({end_ts})"}
 
     matched = [s for s in series_list if s["name"] == metric and s["scope"] == scope]
     if not matched:
@@ -81,7 +92,7 @@ def query_metrics(metric, scope, start=None, end=None):
         "points": points,
     }
     if not points:
-        result["note"] = "no data points in the requested time range"
+        result["note"] = "未找到与请求的时间范围相匹配的指标数据"
     return result
 
 
@@ -109,14 +120,9 @@ def query_logs(service=None, level=None, start=None, end=None):
             "available_levels": available_levels,
         }
 
-    start_ts, error = _normalize_time(start, "start")
+    start_ts, end_ts, error = _normalize_range(start, end)
     if error:
         return error
-    end_ts, error = _normalize_time(end, "end")
-    if error:
-        return error
-    if start_ts and end_ts and start_ts > end_ts:
-        return {"error": f"start ({start_ts}) is after end ({end_ts})"}
 
     matched = [
         log
@@ -134,5 +140,44 @@ def query_logs(service=None, level=None, start=None, end=None):
     ]
     result = {"logs": matched, "total": len(matched)}
     if not matched:
-        result["note"] = "no log entries matched the requested filters"
+        result["note"] = "未找到与请求的筛选条件相匹配的日志条目"
+    return result
+
+
+def query_deploys(service=None, start=None, end=None):
+    """查询发布记录，结束时间包含所选整分钟。"""
+    try:
+        with open(DEPLOYS_FILE, encoding="utf-8") as f:
+            data = json.load(f)
+        deploys = data["deploys"]
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        return {"error": f"failed to read deploy data: {exc}"}
+
+    available_services = sorted({deploy["service"] for deploy in deploys})
+    if service is not None and service not in available_services:
+        return {
+            "error": f"unknown service: {service!r}",
+            "available_services": available_services,
+        }
+
+    start_ts, end_ts, error = _normalize_range(start, end)
+    if error:
+        return error
+
+    matched = [
+        deploy
+        for deploy in deploys
+        if (service is None or deploy["service"] == service)
+        and (
+            start_ts is None
+            or deploy["time"][:16] >= start_ts
+        )
+        and (
+            end_ts is None
+            or deploy["time"][:16] <= end_ts
+        )
+    ]
+    result = {"deploys": matched, "total": len(matched)}
+    if not matched:
+        result["note"] = "未找到与请求的筛选条件相匹配的发布记录"
     return result

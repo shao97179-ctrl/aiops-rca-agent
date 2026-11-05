@@ -30,7 +30,7 @@ def test_out_of_range_returns_empty_result():
         "start": "2026-11-01T13:00",
         "end": "2026-11-01T13:10",
     }
-    assert result["note"] == "no data points in the requested time range"
+    assert result["note"] == "未找到与请求的时间范围相匹配的指标数据"
 
 
 def test_unknown_metric_returns_available_metrics():
@@ -127,7 +127,7 @@ def test_query_logs_no_matches_is_not_an_error():
     assert "error" not in result
     assert result["logs"] == []
     assert result["total"] == 0
-    assert result["note"] == "no log entries matched the requested filters"
+    assert result["note"] == "未找到与请求的筛选条件相匹配的日志条目"
 
 
 def test_missing_log_file_returns_error(monkeypatch, tmp_path):
@@ -138,3 +138,52 @@ def test_missing_log_file_returns_error(monkeypatch, tmp_path):
 
     assert "error" in result
     assert result["error"].startswith("failed to read log data")
+
+
+def test_query_deploys_filters_service_and_minute():
+    result = tools.query_deploys(
+        service="payment",
+        start="2026-11-01T12:00",
+        end="2026-11-01T12:00",
+    )
+
+    assert "error" not in result
+    assert result["total"] == 1
+    assert result["deploys"][0]["id"] == "dep_d1003"
+    assert result["deploys"][0]["detail"] == {
+        "file": "payment/config.yaml",
+        "modified_key": "dependency.cart.port",
+        "old_value": "8080",
+        "new_value": "8081",
+    }
+
+
+def test_query_deploys_unknown_service_returns_available_services():
+    result = tools.query_deploys(service="database")
+
+    assert "error" in result
+    assert result["available_services"] == ["cart", "frontend", "payment"]
+    assert "deploys" not in result
+
+
+def test_query_deploys_no_matches_is_not_an_error():
+    result = tools.query_deploys(
+        service="payment",
+        start="2026-11-01T13:00",
+        end="2026-11-01T13:10",
+    )
+
+    assert "error" not in result
+    assert result["deploys"] == []
+    assert result["total"] == 0
+    assert result["note"] == "未找到与请求的筛选条件相匹配的发布记录"
+
+
+def test_missing_deploy_file_returns_error(monkeypatch, tmp_path):
+    missing_file = tmp_path / "missing.json"
+    monkeypatch.setattr(tools, "DEPLOYS_FILE", missing_file)
+
+    result = tools.query_deploys()
+
+    assert "error" in result
+    assert result["error"].startswith("failed to read deploy data")
