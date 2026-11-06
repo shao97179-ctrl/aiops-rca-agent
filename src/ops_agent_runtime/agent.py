@@ -1,3 +1,4 @@
+import json
 from operator import add
 from typing import Annotated, Literal, TypedDict
 
@@ -69,14 +70,15 @@ ModelDecision = Annotated[
     Field(discriminator="action"),
 ]
 MODEL_DECISION_ADAPTER = TypeAdapter(ModelDecision)
+MAX_INVESTIGATION_ATTEMPTS = 8
 
 
 def _parse_model_action(raw_action):
     """解析模型原始输出；失败时返回可回灌的错误，而不是抛异常。"""
     if not isinstance(raw_action, dict):
         return None, (
-            "invalid model output: expected an object, "
-            f"received {type(raw_action).__name__}"
+            "模型输出不合法：应为对象，"
+            f"实际收到 {type(raw_action).__name__}"
         )
 
     action_name = raw_action.get("action")
@@ -84,8 +86,18 @@ def _parse_model_action(raw_action):
         return MODEL_DECISION_ADAPTER.validate_python(raw_action), None
     except ValidationError as exc:
         if action_name not in {"call_tool", "submit_conclusion"}:
-            return None, f"unsupported action: {action_name!r}"
-        return None, f"invalid model output for action {action_name!r}: {exc}"
+            return None, f"不支持的动作：{action_name!r}"
+        return None, f"动作 {action_name!r} 的模型输出不合法：{exc}"
+
+
+def _tool_call_signature(tool_name, arguments):
+    """生成稳定的工具调用签名，用于识别工具名和参数都相同的调用。"""
+    return json.dumps(
+        {"tool": tool_name, "arguments": arguments},
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
 
 
 class AgentState(TypedDict):
@@ -112,7 +124,10 @@ def build_agent_graph(model):
             return {
                 "current_action": None,
                 "messages": [{"role": "validation_error", "error": error}],
-                "investigation_count": state["investigation_count"] + 1,
+                "investigation_count": min(
+                    state["investigation_count"] + 1,
+                    MAX_INVESTIGATION_ATTEMPTS,
+                ),
                 "traces": [{"event": "validation_error", "error": error}],
             }
 
@@ -133,16 +148,19 @@ def build_agent_graph(model):
     def route_after_agent(state: AgentState):
         action = state["current_action"]
 
-        if action is None:
-            return "retry"
-
-        if action and action.get("action") == "call_tool":
-            return "call_tool"
-
         if action and action.get("action") == "submit_conclusion":
             return "submit_conclusion"
 
-        raise ValueError(f"unsupported action: {action!r}")
+        if state["investigation_count"] >= MAX_INVESTIGATION_ATTEMPTS:
+            return "limit_reached"
+
+        if action is None:
+            return "retry"
+
+        if action.get("action") == "call_tool":
+            return "call_tool"
+
+        raise ValueError(f"不支持的动作：{action!r}")
 
     def tool_node(state: AgentState):
         action = state["current_action"]
@@ -150,7 +168,35 @@ def build_agent_graph(model):
         arguments = action.get("arguments", {})
 
         if tool_name != "query_logs":
-            raise ValueError(f"unsupported tool: {tool_name!r}")
+            raise ValueError(f"不支持的工具：{tool_name!r}")
+
+        signature = _tool_call_signature(tool_name, arguments)
+        if signature in state["called_signatures"]:
+            error = (
+                f"重复工具调用已拦截：{tool_name} "
+                "已使用相同参数调用过"
+            )
+            return {
+                "messages": [
+                    {
+                        "role": "tool_call_error",
+                        "tool": tool_name,
+                        "arguments": arguments,
+                        "error": error,
+                    }
+                ],
+                "current_action": None,
+                "investigation_count": state["investigation_count"] + 1,
+                "traces": [
+                    {
+                        "event": "duplicate_call_blocked",
+                        "tool": tool_name,
+                        "arguments": arguments,
+                        "signature": signature,
+                        "error": error,
+                    }
+                ],
+            }
 
         result = query_logs(
             service=arguments.get("service"),
@@ -178,12 +224,14 @@ def build_agent_graph(model):
             "messages": [message],
             "current_action": None,
             "investigation_count": state["investigation_count"] + 1,
+            "called_signatures": [signature],
             "evidence": evidence,
             "traces": [
                 {
                     "event": "tool_result",
                     "tool": tool_name,
                     "arguments": arguments,
+                    "signature": signature,
                     "result": result,
                 }
             ],
@@ -211,11 +259,26 @@ def build_agent_graph(model):
             ],
         }
 
+    def limit_reached_node(state: AgentState):
+        return {
+            "current_action": None,
+            "investigation_status": "incomplete",
+            "final_conclusion": None,
+            "traces": [
+                {
+                    "event": "investigation_limit_reached",
+                    "investigation_count": state["investigation_count"],
+                    "max_investigation_count": MAX_INVESTIGATION_ATTEMPTS,
+                }
+            ],
+        }
+
     graph = StateGraph(AgentState)
 
     graph.add_node("agent", agent_node)
     graph.add_node("tools", tool_node)
     graph.add_node("finalize", finalize_node)
+    graph.add_node("limit", limit_reached_node)
 
     graph.add_edge(START, "agent")
 
@@ -226,10 +289,12 @@ def build_agent_graph(model):
             "call_tool": "tools",
             "submit_conclusion": "finalize",
             "retry": "agent",
+            "limit_reached": "limit",
         },
     )
 
     graph.add_edge("tools", "agent")
     graph.add_edge("finalize", END)
+    graph.add_edge("limit", END)
 
     return graph.compile()

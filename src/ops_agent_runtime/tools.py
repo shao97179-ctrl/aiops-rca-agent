@@ -16,21 +16,21 @@ def _normalize_time(value, name):
         return datetime.fromisoformat(value).strftime("%Y-%m-%dT%H:%M"), None
     except (ValueError, TypeError):
         return None, {
-            "error": f"invalid {name}: {value!r}, expected format YYYY-MM-DDTHH:MM"
+            "error": f"{name}不合法：{value!r}，时间格式应为 YYYY-MM-DDTHH:MM"
         }
 
 
 def _normalize_range(start, end):
     """校验查询时间范围，返回 (start_ts, end_ts, error)。"""
-    start_ts, error = _normalize_time(start, "start")
+    start_ts, error = _normalize_time(start, "开始时间")
     if error:
         return None, None, error
-    end_ts, error = _normalize_time(end, "end")
+    end_ts, error = _normalize_time(end, "结束时间")
     if error:
         return None, None, error
     if start_ts and end_ts and start_ts > end_ts:
         return None, None, {
-            "error": f"start ({start_ts}) is after end ({end_ts})"
+            "error": f"开始时间 {start_ts} 晚于结束时间 {end_ts}"
         }
     return start_ts, end_ts, None
 
@@ -41,7 +41,7 @@ def query_metrics(metric, scope, start=None, end=None):
         with open(METRICS_FILE, encoding="utf-8") as f:
             data = json.load(f)
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
-        return {"error": f"failed to read metrics data: {exc}"}
+        return {"error": f"读取指标数据失败：{exc}"}
 
     series_list = data["series"]
     available_metrics = sorted({s["name"] for s in series_list})
@@ -49,13 +49,13 @@ def query_metrics(metric, scope, start=None, end=None):
 
     if metric not in available_metrics:
         return {
-            "error": f"unknown metric: {metric!r}",
+            "error": f"未知指标：{metric!r}",
             "available_metrics": available_metrics,
             "available_scopes": available_scopes,
         }
     if scope not in available_scopes:
         return {
-            "error": f"unknown scope: {scope!r}",
+            "error": f"未知作用域：{scope!r}",
             "available_metrics": available_metrics,
             "available_scopes": available_scopes,
         }
@@ -67,7 +67,7 @@ def query_metrics(metric, scope, start=None, end=None):
     matched = [s for s in series_list if s["name"] == metric and s["scope"] == scope]
     if not matched:
         return {
-            "error": f"no series for metric={metric!r} scope={scope!r}",
+            "error": f"未找到指标 {metric!r}、作用域 {scope!r} 对应的数据序列",
             "available_series": [
                 {"metric": s["name"], "scope": s["scope"]} for s in series_list
             ],
@@ -102,20 +102,20 @@ def query_logs(service=None, level=None, start=None, end=None):
         with open(LOGS_FILE, encoding="utf-8") as f:
             logs = [json.loads(line) for line in f if line.strip()]
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
-        return {"error": f"failed to read log data: {exc}"}
+        return {"error": f"读取日志数据失败：{exc}"}
 
     available_services = sorted({log["service"] for log in logs})
     available_levels = sorted({log["level"] for log in logs})
 
     if service is not None and service not in available_services:
         return {
-            "error": f"unknown service: {service!r}",
+            "error": f"未知服务：{service!r}",
             "available_services": available_services,
             "available_levels": available_levels,
         }
     if level is not None and level not in available_levels:
         return {
-            "error": f"unknown level: {level!r}",
+            "error": f"未知日志级别：{level!r}",
             "available_services": available_services,
             "available_levels": available_levels,
         }
@@ -151,12 +151,12 @@ def query_deploys(service=None, start=None, end=None):
             data = json.load(f)
         deploys = data["deploys"]
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
-        return {"error": f"failed to read deploy data: {exc}"}
+        return {"error": f"读取发布数据失败：{exc}"}
 
     available_services = sorted({deploy["service"] for deploy in deploys})
     if service is not None and service not in available_services:
         return {
-            "error": f"unknown service: {service!r}",
+            "error": f"未知服务：{service!r}",
             "available_services": available_services,
         }
 

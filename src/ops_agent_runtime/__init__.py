@@ -1,2 +1,2 @@
 def main() -> None:
-    print("Hello from ops-agent-runtime!")
+    print("运维智能体运行时已启动。")
