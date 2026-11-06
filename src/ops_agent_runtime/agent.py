@@ -1,3 +1,4 @@
+import json
 from operator import add
 from typing import Annotated, TypedDict
 
@@ -7,6 +8,12 @@ from pydantic import ValidationError
 from ops_agent_runtime.schemas import (
     CALL_TOOL_ACTION_ADAPTERS,
     SUBMIT_CONCLUSION_ADAPTER,
+)
+from ops_agent_runtime.model import (
+    ModelConfigurationError,
+    ModelOutputError,
+    ModelRequestError,
+    build_model_messages,
 )
 from ops_agent_runtime.tools import query_deploys, query_logs, query_metrics
 from ops_agent_runtime.validation import (
@@ -60,12 +67,38 @@ def build_agent_graph(model):
     """构建“模型决策 -> 工具执行 -> 模型决策”的最小 LangGraph。"""
 
     def agent_node(state: AgentState):
-        parsed_action, error = _parse_model_action(model(state))
+        messages = build_model_messages(state, MAX_INVESTIGATION_ATTEMPTS)
+        try:
+            raw_action = model(messages)
+        except (
+            ModelConfigurationError,
+            ModelRequestError,
+            ModelOutputError,
+        ) as exc:
+            return {
+                "current_action": None,
+                "investigation_status": "system_error",
+                "final_conclusion": None,
+                "traces": [
+                    {
+                        "event": "model_error",
+                        "error_type": type(exc).__name__,
+                        "error": str(exc),
+                    }
+                ],
+            }
+
+        parsed_action, error = _parse_model_action(raw_action)
 
         if error:
             return {
                 "current_action": None,
-                "messages": [{"role": "validation_error", "error": error}],
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": f"系统校验反馈：{error}",
+                    }
+                ],
                 "investigation_count": min(
                     state["investigation_count"] + 1,
                     MAX_INVESTIGATION_ATTEMPTS,
@@ -76,6 +109,17 @@ def build_agent_graph(model):
         action = parsed_action.model_dump()
         return {
             "current_action": action,
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": json.dumps(
+                        action,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ),
+                }
+            ],
             "traces": [
                 {
                     "event": "model_decision",
@@ -89,6 +133,9 @@ def build_agent_graph(model):
 
     def route_after_agent(state: AgentState):
         action = state["current_action"]
+
+        if state["investigation_status"] == "system_error":
+            return "model_error"
 
         if action and action.get("action") == "submit_conclusion":
             return "submit_conclusion"
@@ -118,10 +165,18 @@ def build_agent_graph(model):
             return {
                 "messages": [
                     {
-                        "role": "tool_call_error",
-                        "tool": tool_name,
-                        "arguments": arguments,
-                        "error": error,
+                        "role": "user",
+                        "content": json.dumps(
+                            {
+                                "type": "tool_call_error",
+                                "tool": tool_name,
+                                "arguments": arguments,
+                                "error": error,
+                            },
+                            ensure_ascii=False,
+                            sort_keys=True,
+                            separators=(",", ":"),
+                        ),
                     }
                 ],
                 "current_action": None,
@@ -178,11 +233,19 @@ def build_agent_graph(model):
             raise ValueError(f"不支持的工具：{tool_name!r}")
 
         message = {
-            "role": "tool",
-            "tool": tool_name,
-            "arguments": arguments,
-            "reason": action.get("reason"),
-            "result": result,
+            "role": "user",
+            "content": json.dumps(
+                {
+                    "type": "tool_result",
+                    "tool": tool_name,
+                    "arguments": arguments,
+                    "reason": action.get("reason"),
+                    "result": result,
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
         }
 
         return {
@@ -269,6 +332,7 @@ def build_agent_graph(model):
             "submit_conclusion": "finalize",
             "retry": "agent",
             "limit_reached": "limit",
+            "model_error": END,
         },
     )
 
