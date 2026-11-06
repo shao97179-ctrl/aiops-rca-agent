@@ -1,114 +1,19 @@
-import json
 from operator import add
-from typing import Annotated, Literal, TypedDict
+from typing import Annotated, TypedDict
 
 from langgraph.graph import END, START, StateGraph
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
+from pydantic import ValidationError
 
+from ops_agent_runtime.schemas import (
+    CALL_TOOL_ACTION_ADAPTERS,
+    SUBMIT_CONCLUSION_ADAPTER,
+)
 from ops_agent_runtime.tools import query_deploys, query_logs, query_metrics
+from ops_agent_runtime.validation import (
+    tool_call_signature,
+    validate_conclusion,
+)
 
-
-class QueryLogsArguments(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    service: str | None = None
-    level: Literal["INFO", "WARN", "ERROR"] | None = None
-    start: str | None = None
-    end: str | None = None
-
-
-class QueryMetricsArguments(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    metric: str = Field(min_length=1)
-    scope: str = Field(min_length=1)
-    start: str | None = None
-    end: str | None = None
-
-
-class QueryDeploysArguments(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    service: str | None = None
-    start: str | None = None
-    end: str | None = None
-
-
-class QueryLogsAction(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    action: Literal["call_tool"]
-    tool: Literal["query_logs"]
-    arguments: QueryLogsArguments
-    reason: str = Field(min_length=1)
-
-
-class QueryMetricsAction(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    action: Literal["call_tool"]
-    tool: Literal["query_metrics"]
-    arguments: QueryMetricsArguments
-    reason: str = Field(min_length=1)
-
-
-class QueryDeploysAction(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    action: Literal["call_tool"]
-    tool: Literal["query_deploys"]
-    arguments: QueryDeploysArguments
-    reason: str = Field(min_length=1)
-
-
-class LogEvidence(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    type: Literal["log"]
-    id: str = Field(min_length=1)
-
-
-class DeployEvidence(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    type: Literal["deploy"]
-    id: str = Field(min_length=1)
-
-
-class MetricEvidence(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    type: Literal["metric"]
-    metric: str = Field(min_length=1)
-    scope: str = Field(min_length=1)
-    time: str = Field(min_length=1)
-
-
-EvidenceReference = Annotated[
-    LogEvidence | DeployEvidence | MetricEvidence,
-    Field(discriminator="type"),
-]
-
-
-class SubmitConclusionAction(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    action: Literal["submit_conclusion"]
-    root_cause: str = Field(min_length=1)
-    evidence: list[EvidenceReference]
-    confidence: Literal["high", "medium", "low"]
-    unknowns: list[str]
-
-
-CallToolAction = QueryLogsAction | QueryMetricsAction | QueryDeploysAction
-ModelDecision = CallToolAction | SubmitConclusionAction
-
-CALL_TOOL_ACTION_ADAPTERS = {
-    "query_logs": TypeAdapter(QueryLogsAction),
-    "query_metrics": TypeAdapter(QueryMetricsAction),
-    "query_deploys": TypeAdapter(QueryDeploysAction),
-}
-SUBMIT_CONCLUSION_ADAPTER = TypeAdapter(SubmitConclusionAction)
 MAX_INVESTIGATION_ATTEMPTS = 8
 
 
@@ -135,50 +40,6 @@ def _parse_model_action(raw_action):
         return adapter.validate_python(raw_action), None
     except ValidationError as exc:
         return None, f"动作 {action_name!r} 的模型输出不合法：{exc}"
-
-
-def _tool_call_signature(tool_name, arguments):
-    """生成稳定的工具调用签名，用于识别工具名和参数都相同的调用。"""
-    return json.dumps(
-        {"tool": tool_name, "arguments": arguments},
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    )
-
-
-def _evidence_reference_key(evidence):
-    """把单条证据转换为规范字符串，用于判断它是否由本次会话真实返回。"""
-    return json.dumps(
-        evidence,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    )
-
-
-def _validate_conclusion(action, available_evidence):
-    """校验最终结论的证据真实性和置信度约束，返回中文错误列表。"""
-    submitted_evidence = action.get("evidence", [])
-    available_keys = {
-        _evidence_reference_key(evidence) for evidence in available_evidence
-    }
-    unknown_evidence = [
-        evidence
-        for evidence in submitted_evidence
-        if _evidence_reference_key(evidence) not in available_keys
-    ]
-
-    errors = []
-    if unknown_evidence:
-        errors.append(f"结论引用了本次调查未返回的证据：{unknown_evidence}")
-
-    confidence = action.get("confidence")
-    if confidence in {"high", "medium"} and not submitted_evidence:
-        errors.append("高或中置信度结论必须引用真实证据")
-    if confidence == "low" and not action.get("unknowns"):
-        errors.append("低置信度结论必须填写未知项")
-    return errors
 
 
 class AgentState(TypedDict):
@@ -248,7 +109,7 @@ def build_agent_graph(model):
         tool_name = action.get("tool")
         arguments = action.get("arguments", {})
 
-        signature = _tool_call_signature(tool_name, arguments)
+        signature = tool_call_signature(tool_name, arguments)
         if signature in state["called_signatures"]:
             error = (
                 f"重复工具调用已拦截：{tool_name} "
@@ -350,7 +211,7 @@ def build_agent_graph(model):
             "confidence": action.get("confidence"),
             "unknowns": action.get("unknowns", []),
         }
-        errors = _validate_conclusion(action, state["evidence"])
+        errors = validate_conclusion(action, state["evidence"])
         if errors:
             return {
                 "current_action": None,
